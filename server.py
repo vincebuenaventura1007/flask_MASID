@@ -6,8 +6,8 @@ app = Flask(__name__)
 CORS(app)  # Allow requests from Flutter
 
 # Connect to Railway PostgreSQL
-DATABASE_URL = "postgresql://postgres:xbMQBaaSkLlMqmlLLSzxOUSQXzhzJDUOd@postgres.railway.internal:5432/railway"
-conn = psycopg2.connect(DATABASE_URL)
+DATABASE_URL = "postgresql://postgres:IaQzbHtNwdPONtDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway"
+conn = psycopg2.connect(DATABASE_URL, sslmode='require')
 
 # Create table if not exists
 with conn.cursor() as cur:
