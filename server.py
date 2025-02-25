@@ -13,7 +13,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Get DATABASE_URL from Railway Environment Variables or use local PostgreSQL
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtNwdPONtDxSewYKYUXEQwhzwvb@localhost:5432/railway")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway")
 
 # Function to get a new database connection
 def get_db_connection():
