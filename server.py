@@ -1,18 +1,12 @@
-# -*- coding: utf-8 -*-
-import sys
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psycopg2
 import os
-from psycopg2 import sql
-
-# Ensure UTF-8 Encoding to Avoid Unicode Errors
-sys.stdout.reconfigure(encoding='utf-8')
 
 app = Flask(__name__)
 CORS(app)
 
-# Get DATABASE_URL from Railway Environment Variables or use local PostgreSQL
+# Get DATABASE_URL from Railway Environment Variables or use default
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway")
 
 # Function to get a new database connection
@@ -24,6 +18,26 @@ def get_db_connection():
         print(f"[ERROR] Failed to connect to the database: {e}")
         return None
 
+# Create Table if it doesn't exist
+def create_table():
+    conn = get_db_connection()
+    if conn:
+        with conn.cursor() as cur:
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS inventory (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    amount FLOAT NOT NULL,
+                    unit TEXT NOT NULL
+                )
+            ''')
+            conn.commit()
+        conn.close()
+
+# Initialize the Database on Startup
+with app.app_context():
+    create_table()
+
 # Get all inventory items
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
@@ -31,7 +45,7 @@ def get_inventory():
     if conn:
         try:
             with conn.cursor() as cur:
-                cur.execute('SELECT * FROM food_inventory ORDER BY id DESC')
+                cur.execute('SELECT * FROM inventory ORDER BY id DESC')
                 items = cur.fetchall()
                 inventory_list = [
                     {
@@ -68,7 +82,7 @@ def add_inventory():
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    'INSERT INTO food_inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
+                    'INSERT INTO inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
                     (name, amount, unit)
                 )
                 new_item = cur.fetchone()
@@ -82,6 +96,29 @@ def add_inventory():
         except Exception as e:
             print(f"[ERROR] Failed to add inventory item: {e}")
             return jsonify({"error": "Failed to add inventory item"}), 500
+        finally:
+            conn.close()
+    else:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+
+# Delete an inventory item by ID
+@app.route('/api/inventory/<int:item_id>', methods=['DELETE'])
+def delete_inventory(item_id):
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute('DELETE FROM inventory WHERE id = %s RETURNING id', (item_id,))
+                deleted_item = cur.fetchone()
+                conn.commit()
+
+                if deleted_item:
+                    return jsonify({"message": "Item deleted successfully"}), 200
+                else:
+                    return jsonify({"error": "Item not found"}), 404
+        except Exception as e:
+            print(f"[ERROR] Failed to delete inventory item: {e}")
+            return jsonify({"error": "Failed to delete inventory item"}), 500
         finally:
             conn.close()
     else:
