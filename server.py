@@ -106,6 +106,46 @@ def add_inventory():
     else:
         return jsonify({"error": "Failed to connect to the database"}), 500
 
+# Edit an inventory item by ID
+@app.route('/api/inventory/<int:item_id>', methods=['PUT'])
+def edit_inventory(item_id):
+    data = request.get_json()
+    name = data.get('name')
+    amount = data.get('amount')
+    unit = data.get('unit')
+
+    # Input Validation
+    if not name or not amount or not unit:
+        return jsonify({"error": "Invalid input"}), 400
+
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'UPDATE inventory SET name = %s, amount = %s, unit = %s WHERE id = %s RETURNING *',
+                    (name, amount, unit, item_id)
+                )
+                updated_item = cur.fetchone()
+                conn.commit()
+
+                if updated_item:
+                    return jsonify({
+                        'id': updated_item[0],
+                        'name': updated_item[1],
+                        'amount': float(updated_item[2]),
+                        'unit': updated_item[3]
+                    }), 200
+                else:
+                    return jsonify({"error": "Item not found"}), 404
+        except Exception as e:
+            print(f"[ERROR] Failed to edit inventory item: {e}")
+            return jsonify({"error": "Failed to edit inventory item"}), 500
+        finally:
+            conn.close()
+    else:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+
 # Delete an inventory item by ID
 @app.route('/api/inventory/<int:item_id>', methods=['DELETE'])
 def delete_inventory(item_id):
@@ -136,7 +176,6 @@ def health_check():
 
 # Run the Flask app
 if __name__ == '__main__':
-    # Use Railway-assigned PORT if available, otherwise default to 5000
     HOST = '0.0.0.0'
     PORT = int(os.getenv('PORT', 5000))
     app.run(debug=True, host=HOST, port=PORT)
