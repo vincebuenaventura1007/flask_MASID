@@ -1,8 +1,13 @@
+# -*- coding: utf-8 -*-
+import sys
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psycopg2
 import os
 from psycopg2 import sql
+
+# Ensure UTF-8 Encoding to Avoid Unicode Errors
+sys.stdout.reconfigure(encoding='utf-8')
 
 app = Flask(__name__)
 CORS(app)
@@ -16,7 +21,7 @@ def get_db_connection():
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         return conn
     except Exception as e:
-        print(f"❌ Failed to connect to the database: {e}")
+        print(f"[ERROR] Failed to connect to the database: {e}")
         return None
 
 # Get all inventory items
@@ -24,20 +29,25 @@ def get_db_connection():
 def get_inventory():
     conn = get_db_connection()
     if conn:
-        with conn.cursor() as cur:
-            cur.execute('SELECT * FROM food_inventory ORDER BY id DESC')
-            items = cur.fetchall()
-            inventory_list = [
-                {
-                    'id': item[0],
-                    'name': item[1],
-                    'amount': float(item[2]),
-                    'unit': item[3]
-                }
-                for item in items
-            ]
+        try:
+            with conn.cursor() as cur:
+                cur.execute('SELECT * FROM food_inventory ORDER BY id DESC')
+                items = cur.fetchall()
+                inventory_list = [
+                    {
+                        'id': item[0],
+                        'name': item[1],
+                        'amount': float(item[2]),
+                        'unit': item[3]
+                    }
+                    for item in items
+                ]
+                return jsonify(inventory_list)
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch inventory: {e}")
+            return jsonify({"error": "Failed to fetch inventory"}), 500
+        finally:
             conn.close()
-            return jsonify(inventory_list)
     else:
         return jsonify({"error": "Failed to connect to the database"}), 500
 
@@ -45,29 +55,42 @@ def get_inventory():
 @app.route('/api/inventory', methods=['POST'])
 def add_inventory():
     data = request.get_json()
-    name = data['name']
-    amount = data['amount']
-    unit = data['unit']
+    name = data.get('name')
+    amount = data.get('amount')
+    unit = data.get('unit')
+
+    # Input Validation
+    if not name or not amount or not unit:
+        return jsonify({"error": "Invalid input"}), 400
 
     conn = get_db_connection()
     if conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                'INSERT INTO food_inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
-                (name, amount, unit)
-            )
-            new_item = cur.fetchone()
-            conn.commit()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'INSERT INTO food_inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
+                    (name, amount, unit)
+                )
+                new_item = cur.fetchone()
+                conn.commit()
+                return jsonify({
+                    'id': new_item[0],
+                    'name': new_item[1],
+                    'amount': float(new_item[2]),
+                    'unit': new_item[3]
+                }), 201
+        except Exception as e:
+            print(f"[ERROR] Failed to add inventory item: {e}")
+            return jsonify({"error": "Failed to add inventory item"}), 500
+        finally:
             conn.close()
-
-            return jsonify({
-                'id': new_item[0],
-                'name': new_item[1],
-                'amount': float(new_item[2]),
-                'unit': new_item[3]
-            }), 201
     else:
         return jsonify({"error": "Failed to connect to the database"}), 500
+
+# Health Check Endpoint
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "API is running"}), 200
 
 # Run the Flask app
 if __name__ == '__main__':

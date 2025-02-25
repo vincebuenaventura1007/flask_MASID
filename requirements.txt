@@ -1,5 +1,6 @@
-gunicorn==23.0.0
+gunicorn
 Flask
 psycopg2-binary
 flask-cors
 python-dotenv
+sys
