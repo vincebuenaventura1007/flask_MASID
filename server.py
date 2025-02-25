@@ -7,7 +7,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Get DATABASE_URL from Railway Environment Variables or use default
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@switchyard.proxy.rlwy.net:28891/railway")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway")
 
 # Function to get a new database connection
 def get_db_connection():
@@ -100,7 +100,7 @@ def add_inventory():
                 }), 201
         except Exception as e:
             print(f"[ERROR] Failed to add inventory item: {e}")
-            return jsonify({"error": "Failed to add inventory item"}), 500
+            return jsonify({"error": f"Failed to add inventory item: {str(e)}"}), 500
         finally:
             conn.close()
     else:
