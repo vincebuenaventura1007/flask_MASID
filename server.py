@@ -7,40 +7,44 @@ from psycopg2 import sql
 app = Flask(__name__)
 CORS(app)
 
-# Get DATABASE_URL from Railway Environment Variables
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtNwdPONtDxSewYKYUXEQwhzwvb@switchyard.proxy.rlwy.net:28891/railway")
+# Load Environment Variables
+DB_HOST = os.getenv('DB_HOST', 'postgres.railway.internal')
+DB_NAME = os.getenv('DB_NAME', 'railway')
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb')
+DB_PORT = os.getenv('DB_PORT', '5432')
 
-# Function to get a new database connection
 def get_db_connection():
-    try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-        return conn
-    except Exception as e:
-        print(f"❌ Failed to connect to the database: {e}")
-        return None
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        port=DB_PORT
+    )
+    return conn
 
 # Get all inventory items
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
     conn = get_db_connection()
-    if conn:
-        with conn.cursor() as cur:
-            cur.execute('SELECT * FROM food_inventory ORDER BY created_at DESC')
-            items = cur.fetchall()
-            inventory_list = [
-                {
-                    'id': item[0],
-                    'name': item[1],
-                    'amount': float(item[2]),
-                    'unit': item[3],
-                    'created_at': item[4].isoformat()
-                }
-                for item in items
-            ]
-            conn.close()
-            return jsonify(inventory_list)
-    else:
-        return jsonify({"error": "Failed to connect to the database"}), 500
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM food_inventory ORDER BY created_at DESC')
+    items = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    inventory_list = []
+    for item in items:
+        inventory_list.append({
+            'id': item[0],
+            'name': item[1],
+            'amount': float(item[2]),
+            'unit': item[3],
+            'created_at': item[4].isoformat()
+        })
+
+    return jsonify(inventory_list)
 
 # Add a new inventory item
 @app.route('/api/inventory', methods=['POST'])
@@ -51,25 +55,23 @@ def add_inventory():
     unit = data['unit']
 
     conn = get_db_connection()
-    if conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                'INSERT INTO food_inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
-                (name, amount, unit)
-            )
-            new_item = cur.fetchone()
-            conn.commit()
-            conn.close()
+    cur = conn.cursor()
+    cur.execute(
+        'INSERT INTO food_inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
+        (name, amount, unit)
+    )
+    new_item = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
 
-            return jsonify({
-                'id': new_item[0],
-                'name': new_item[1],
-                'amount': float(new_item[2]),
-                'unit': new_item[3],
-                'created_at': new_item[4].isoformat()
-            }), 201
-    else:
-        return jsonify({"error": "Failed to connect to the database"}), 500
+    return jsonify({
+        'id': new_item[0],
+        'name': new_item[1],
+        'amount': float(new_item[2]),
+        'unit': new_item[3],
+        'created_at': new_item[4].isoformat()
+    }), 201
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
