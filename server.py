@@ -38,6 +38,11 @@ def create_table():
 with app.app_context():
     create_table()
 
+# Root Route (for testing)
+@app.route('/', methods=['GET'])
+def root():
+    return jsonify({"message": "Welcome to the Inventory API!"})
+
 # Get all inventory items
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
@@ -132,6 +137,6 @@ def health_check():
 # Run the Flask app
 if __name__ == '__main__':
     # Use Railway-assigned PORT if available, otherwise default to 5000
-    HOST = os.getenv('HOST', '127.0.0.1')
+    HOST = '0.0.0.0'
     PORT = int(os.getenv('PORT', 5000))
     app.run(debug=True, host=HOST, port=PORT)
