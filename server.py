@@ -1,72 +1,77 @@
-from flask import Flask, request, jsonify
-import psycopg2
+from flask import Flask, jsonify, request
 from flask_cors import CORS
+import psycopg2
 import os
+from psycopg2 import sql
 
 app = Flask(__name__)
-CORS(app)  # Allow requests from Flutter
+CORS(app)
 
-# Get DATABASE_URL from Railway Environment Variables
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtNwdPONtDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway")
+# Load Environment Variables
+DB_HOST = os.getenv('DB_HOST', 'postgres.railway.internal')
+DB_NAME = os.getenv('DB_NAME', 'railway')
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'IaQzbHtNwdPONtDxSewYKYUXEQwhzwvb')
+DB_PORT = os.getenv('DB_PORT', '5432')
 
-# Function to get a new connection
 def get_db_connection():
-    try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
-        return conn
-    except Exception as e:
-        print(f"❌ Failed to connect to the database: {e}")
-        return None
+    conn = psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        port=DB_PORT
+    )
+    return conn
 
-# Create table if not exists
-@app.before_first_request
-def create_table():
+# Get all inventory items
+@app.route('/api/inventory', methods=['GET'])
+def get_inventory():
     conn = get_db_connection()
-    if conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS inventory (
-                    id SERIAL PRIMARY KEY,
-                    ingredient TEXT NOT NULL,
-                    amount TEXT NOT NULL
-                )
-            """)
-            conn.commit()
-        conn.close()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM food_inventory ORDER BY created_at DESC')
+    items = cur.fetchall()
+    cur.close()
+    conn.close()
 
-# Get all ingredients
-@app.route('/ingredients', methods=['GET'])
-def get_ingredients():
-    conn = get_db_connection()
-    if conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM inventory")
-            rows = cur.fetchall()
-            ingredients = [{"id": row[0], "ingredient": row[1], "amount": row[2]} for row in rows]
-            conn.close()
-            return jsonify(ingredients)
-    else:
-        return jsonify({"error": "Failed to connect to the database"}), 500
+    inventory_list = []
+    for item in items:
+        inventory_list.append({
+            'id': item[0],
+            'name': item[1],
+            'amount': float(item[2]),
+            'unit': item[3],
+            'created_at': item[4].isoformat()
+        })
 
-# Add a new ingredient
-@app.route('/add_ingredient', methods=['POST'])
-def add_ingredient():
-    data = request.json
-    ingredient = data.get("ingredient")
-    amount = data.get("amount")
-    
-    if not ingredient or not amount:
-        return jsonify({"error": "Invalid data"}), 400
+    return jsonify(inventory_list)
+
+# Add a new inventory item
+@app.route('/api/inventory', methods=['POST'])
+def add_inventory():
+    data = request.get_json()
+    name = data['name']
+    amount = data['amount']
+    unit = data['unit']
 
     conn = get_db_connection()
-    if conn:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO inventory (ingredient, amount) VALUES (%s, %s)", (ingredient, amount))
-            conn.commit()
-        conn.close()
-        return jsonify({"message": "Ingredient added successfully!"})
-    else:
-        return jsonify({"error": "Failed to connect to the database"}), 500
+    cur = conn.cursor()
+    cur.execute(
+        'INSERT INTO food_inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
+        (name, amount, unit)
+    )
+    new_item = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({
+        'id': new_item[0],
+        'name': new_item[1],
+        'amount': float(new_item[2]),
+        'unit': new_item[3],
+        'created_at': new_item[4].isoformat()
+    }), 201
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5000)
