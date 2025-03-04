@@ -1,47 +1,62 @@
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-from inference_sdk import InferenceHTTPClient
+import base64
+import requests
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 CORS(app)
 
-# Load Roboflow API key from environment variables
-ROBOFLOW_API_KEY = os.getenv("ROBOFLOW_API_KEY", "eWs6KSOlnWifknc0nP1U")
+# Roboflow API Config
+ROBOFLOW_API_URL = "https://detect.roboflow.com/infer/workflows/masid-nert8/detect-count-and-visualize"
+ROBOFLOW_API_KEY = "eWs6KSOlnWifknc0nP1U"
 
-# Initialize Roboflow client
-roboflow_client = InferenceHTTPClient(
-    api_url="https://detect.roboflow.com",
-    api_key=ROBOFLOW_API_KEY
-)
+# Upload folder (to temporarily store images)
+UPLOAD_FOLDER = "uploads"
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
-# Roboflow Image Detection API
-@app.route('/api/detect', methods=['POST'])
-def detect_objects():
-    try:
-        if 'image' not in request.files:
-            return jsonify({"error": "No image uploaded"}), 400
-        
-        image = request.files['image']
-        image_path = f"temp/{image.filename}"
-        image.save(image_path)  # Save the uploaded image temporarily
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-        result = roboflow_client.run_workflow(
-            workspace_name="masid-nert8",
-            workflow_id="detect-count-and-visualize",
-            images={"image": image_path},
-            use_cache=True
-        )
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "Welcome to the Flask Image Processing API"}), 200
 
-        os.remove(image_path)  # Delete the image after processing
-        return jsonify(result), 200
+@app.route("/api/detect", methods=["POST"])
+def detect_image():
+    if "image" not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
 
-    except Exception as e:
-        print(f"[ERROR] Roboflow detection failed: {e}")
-        return jsonify({"error": "Object detection failed"}), 500
+    image_file = request.files["image"]
 
-# Run Flask Server
-if __name__ == '__main__':
-    HOST = '0.0.0.0'
-    PORT = int(os.getenv('PORT', 5001))  # Runs on a separate port
+    # Save the image temporarily
+    filename = secure_filename(image_file.filename)
+    image_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    image_file.save(image_path)
+
+    # Convert image to Base64
+    with open(image_path, "rb") as image_file:
+        base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+    # Send the image to Roboflow API
+    payload = {
+        "api_key": ROBOFLOW_API_KEY,
+        "inputs": {
+            "image": {"type": "base64", "value": base64_image}
+        }
+    }
+
+    response = requests.post(ROBOFLOW_API_URL, json=payload)
+
+    if response.status_code == 200:
+        result = response.json()
+        return jsonify({"success": True, "data": result}), 200
+    else:
+        return jsonify({"error": "Failed to get response from Roboflow"}), 500
+
+# Run the Flask app
+if __name__ == "__main__":
+    HOST = "0.0.0.0"
+    PORT = int(os.getenv("PORT", 5000))
     app.run(debug=True, host=HOST, port=PORT)
