@@ -33,13 +33,19 @@ def home():
 
 @app.route("/api/detect", methods=["POST"])
 def detect_image():
+    logging.info("📥 Received a request!")
+
+    # ✅ Print headers & request information
+    logging.info(f"🔹 Request Headers: {request.headers}")
+    logging.info(f"🔹 Request Files: {request.files}")
+
     if "image" not in request.files:
-        logging.info("❌ No image received")
+        logging.error("❌ No image received")
         return jsonify({"error": "No image file provided"}), 400
 
     image_file = request.files["image"]
 
-    # ✅ Save the uploaded image
+    # ✅ Save the Uploaded Image
     filename = secure_filename(image_file.filename)
     image_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     image_file.save(image_path)
@@ -47,13 +53,13 @@ def detect_image():
     logging.info(f"✅ Received Image: {filename}")
     logging.info(f"📂 Saved Image Path: {image_path}")
 
-    # ✅ Convert image to Base64
+    # ✅ Convert Image to Base64
     with open(image_path, "rb") as img:
         base64_image = base64.b64encode(img.read()).decode("utf-8")
 
     logging.info("🔄 Converting Image to Base64...")
 
-    # ✅ Send request to Roboflow API
+    # ✅ Send Request to Roboflow API
     payload = {
         "api_key": ROBOFLOW_API_KEY,
         "inputs": {
@@ -70,20 +76,20 @@ def detect_image():
     if response.status_code == 200:
         data = response.json()
 
-        # ✅ Extract count_objects and class names
+        # ✅ Extract Count & Classes
         count_objects = data.get("outputs", [{}])[0].get("count_objects", 0)
         predictions = data.get("outputs", [{}])[0].get("predictions", [])
 
         logging.info(f"🛠️ Extracted Objects: {count_objects}")
         logging.info(f"📋 Raw Predictions: {predictions}")
 
-        # ✅ Count occurrences of each class
+        # ✅ Count Occurrences of Each Class
         class_counts = {}
         for obj in predictions:
             class_name = obj.get("class", "Unknown")
             class_counts[class_name] = class_counts.get(class_name, 0) + 1
 
-        # ✅ Format the output
+        # ✅ Format the Output
         formatted_result = {
             "ingredients": count_objects,
             "details": [{"count": count, "class": c} for c, count in class_counts.items()]
