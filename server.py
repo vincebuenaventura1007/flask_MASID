@@ -18,7 +18,10 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter API calls
 
 # ✅ Database Configuration (Railway PostgreSQL)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway"
+)
 
 # ✅ Roboflow API Configuration
 ROBOFLOW_API_URL = "https://detect.roboflow.com/infer/workflows/masid-nert8/detect-count-and-visualize"
@@ -105,31 +108,36 @@ def detect_image():
     logging.info(f"📊 Roboflow Response: {response.text}")
 
     if response.status_code == 200:
-        data = response.json()
+        try:
+            data = response.json()
 
-        # ✅ Extract Count & Classes
-        count_objects = data.get("outputs", [{}])[0].get("count_objects", 0)
-        predictions = data.get("outputs", [{}])[0].get("predictions", [])
+            # ✅ Extract Count & Classes
+            outputs = data.get("outputs", [{}])
+            if isinstance(outputs, list) and len(outputs) > 0:
+                count_objects = outputs[0].get("count_objects", 0)
+                predictions = outputs[0].get("predictions", [])
 
-        logging.info(f"🛠️ Extracted Objects: {count_objects}")
-        logging.info(f"📋 Raw Predictions: {predictions}")
+                # ✅ Ensure predictions is a list
+                if isinstance(predictions, list):
+                    class_counts = {}
+                    for obj in predictions:
+                        if isinstance(obj, dict):  # Ensure obj is a dictionary
+                            class_name = obj.get("class", "Unknown")
+                            class_counts[class_name] = class_counts.get(class_name, 0) + 1
 
-        # ✅ Count Occurrences of Each Class
-        class_counts = {}
-        for obj in predictions:
-            class_name = obj.get("class", "Unknown")
-            class_counts[class_name] = class_counts.get(class_name, 0) + 1
+                    # ✅ Format the Output
+                    formatted_result = {
+                        "ingredients": count_objects,
+                        "details": [{"count": count, "class": c} for c, count in class_counts.items()]
+                    }
 
-        # ✅ Format the Output
-        formatted_result = {
-            "ingredients": count_objects,
-            "details": [{"count": count, "class": c} for c, count in class_counts.items()]
-        }
+                    logging.info(f"✅ Final Response: {formatted_result}")
+                    return jsonify(formatted_result), 200
 
-        logging.info(f"✅ Final Response: {formatted_result}")
-        return jsonify(formatted_result), 200
-    else:
-        return jsonify({"error": "Failed to get response from Roboflow", "response": response.text}), 500
+        except Exception as e:
+            logging.error(f"❌ Error processing Roboflow response: {e}")
+    
+    return jsonify({"error": "Failed to get response from Roboflow", "response": response.text}), 500
 
 # ✅ Get All Inventory Items
 @app.route('/api/inventory', methods=['GET'])
