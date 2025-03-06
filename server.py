@@ -88,118 +88,62 @@ def detect_image():
     logging.info(f"📂 Saved Image Path: {image_path}")
 
     # ✅ Convert Image to Base64
-    with open(image_path, "rb") as img:
-        base64_image = base64.b64encode(img.read()).decode("utf-8")
-
-    logging.info("🔄 Converting Image to Base64...")
+    try:
+        with open(image_path, "rb") as img:
+            base64_image = base64.b64encode(img.read()).decode("utf-8")
+        logging.info("🔄 Image converted to Base64 successfully.")
+    except Exception as e:
+        logging.error(f"❌ Error converting image to Base64: {e}")
+        return jsonify({"error": "Failed to convert image to Base64"}), 500
 
     # ✅ Send Request to Roboflow API
     payload = {
         "api_key": ROBOFLOW_API_KEY,
-        "inputs": {
-            "image": {"type": "base64", "value": base64_image}
-        }
+        "image": base64_image
     }
 
-    logging.info("📤 Sending image to Roboflow...")
-    response = requests.post(ROBOFLOW_API_URL, json=payload)
+    headers = {"Content-Type": "application/json"}
 
-    logging.info(f"🔍 Roboflow Response Status: {response.status_code}")
-    logging.info(f"📊 Roboflow Response: {response.text}")
+    try:
+        logging.info("📤 Sending image to Roboflow...")
+        response = requests.post(ROBOFLOW_API_URL, json=payload, headers=headers)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        logging.info(f"🔍 Roboflow Response Status: {response.status_code}")
+        logging.info(f"📊 Roboflow Response: {response.text}")
 
-    if response.status_code == 200:
-        try:
-            data = response.json()
+        data = response.json()
 
-            # ✅ Extract Count & Classes
-            outputs = data.get("outputs", [{}])
-            if isinstance(outputs, list) and len(outputs) > 0:
-                count_objects = outputs[0].get("count_objects", 0)
-                predictions = outputs[0].get("predictions", [])
+        # ✅ Extract Count & Classes Safely
+        outputs = data.get("outputs", [])
+        if isinstance(outputs, list) and len(outputs) > 0:
+            output_data = outputs[0]
+            count_objects = output_data.get("count_objects", 0)
+            predictions = output_data.get("predictions", [])
 
-                # ✅ Ensure predictions is a list
-                if isinstance(predictions, list):
-                    class_counts = {}
-                    for obj in predictions:
-                        if isinstance(obj, dict):  # Ensure obj is a dictionary
-                            class_name = obj.get("class", "Unknown")
-                            class_counts[class_name] = class_counts.get(class_name, 0) + 1
+            # ✅ Ensure predictions is a list
+            class_counts = {}
+            if isinstance(predictions, list):
+                for obj in predictions:
+                    if isinstance(obj, dict):  # Ensure obj is a dictionary
+                        class_name = obj.get("class", "Unknown")
+                        class_counts[class_name] = class_counts.get(class_name, 0) + 1
 
-                    # ✅ Format the Output
-                    formatted_result = {
-                        "ingredients": count_objects,
-                        "details": [{"count": count, "class": c} for c, count in class_counts.items()]
-                    }
+            # ✅ Format the Output
+            formatted_result = {
+                "ingredients": count_objects,
+                "details": [{"count": count, "class": c} for c, count in class_counts.items()]
+            }
 
-                    logging.info(f"✅ Final Response: {formatted_result}")
-                    return jsonify(formatted_result), 200
+            logging.info(f"✅ Final Response: {formatted_result}")
+            return jsonify(formatted_result), 200
 
-        except Exception as e:
-            logging.error(f"❌ Error processing Roboflow response: {e}")
-    
-    return jsonify({"error": "Failed to get response from Roboflow", "response": response.text}), 500
+        else:
+            logging.error("❌ Unexpected Roboflow API response format")
+            return jsonify({"error": "Invalid response from Roboflow", "response": data}), 500
 
-# ✅ Get All Inventory Items
-@app.route('/api/inventory', methods=['GET'])
-def get_inventory():
-    conn = get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute('SELECT * FROM inventory ORDER BY id DESC')
-                items = cur.fetchall()
-                inventory_list = [
-                    {
-                        'id': item[0],
-                        'name': item[1],
-                        'amount': float(item[2]),
-                        'unit': item[3]
-                    }
-                    for item in items
-                ]
-                return jsonify(inventory_list)
-        except Exception as e:
-            logging.error(f"❌ Failed to fetch inventory: {e}")
-            return jsonify({"error": "Failed to fetch inventory"}), 500
-        finally:
-            conn.close()
-    else:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-
-# ✅ Add New Inventory Item
-@app.route('/api/inventory', methods=['POST'])
-def add_inventory():
-    data = request.get_json()
-    name = data.get('name')
-    amount = data.get('amount')
-    unit = data.get('unit')
-
-    if not name or not amount or not unit:
-        return jsonify({"error": "Invalid input"}), 400
-
-    conn = get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    'INSERT INTO inventory (name, amount, unit) VALUES (%s, %s, %s) RETURNING *',
-                    (name, amount, unit)
-                )
-                new_item = cur.fetchone()
-                conn.commit()
-                return jsonify({
-                    'id': new_item[0],
-                    'name': new_item[1],
-                    'amount': float(new_item[2]),
-                    'unit': new_item[3]
-                }), 201
-        except Exception as e:
-            logging.error(f"❌ Failed to add inventory item: {e}")
-            return jsonify({"error": "Failed to add inventory item"}), 500
-        finally:
-            conn.close()
-    else:
-        return jsonify({"error": "Failed to connect to the database"}), 500
+    except requests.exceptions.RequestException as e:
+        logging.error(f"❌ Error communicating with Roboflow: {e}")
+        return jsonify({"error": "Failed to connect to Roboflow API"}), 500
 
 # ✅ Health Check Endpoint
 @app.route('/api/health', methods=['GET'])
