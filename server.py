@@ -177,5 +177,5 @@ def health_check():
 # Run the Flask app
 if __name__ == '__main__':
     HOST = '0.0.0.0'
-    PORT = int(os.getenv('PORT', 5000))
+    PORT = int(os.getenv("INVENTORY_PORT", 5001))  # Use a different port for inventory
     app.run(debug=True, host=HOST, port=PORT)

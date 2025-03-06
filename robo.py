@@ -101,7 +101,7 @@ def detect_image():
         return jsonify({"error": "Failed to get response from Roboflow", "response": response.text}), 500
 
 # ✅ Get Railway-assigned Port
-PORT = int(os.environ.get("PORT", 5000))
+PORT = int(os.getenv("ROBOFLOW_PORT", 5002))  # Use a different port for Roboflow
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=PORT)
