@@ -2,7 +2,6 @@ import sys
 import os
 import base64
 import requests
-import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -10,98 +9,111 @@ from werkzeug.utils import secure_filename
 # ✅ Fix Unicode issues for Windows terminals
 sys.stdout.reconfigure(encoding="utf-8")
 
-# ✅ Configure Logging
-logging.basicConfig(level=logging.INFO)
-
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter API calls
 
-# ✅ Roboflow API Configuration
+# Roboflow API Configuration
 ROBOFLOW_API_URL = "https://detect.roboflow.com/infer/workflows/masid-nert8/detect-count-and-visualize"
 ROBOFLOW_API_KEY = "eWs6KSOlnWifknc0nP1U"
 
-# ✅ Upload folder (temporarily stores images)
+# Upload folder (temporarily stores images)
 UPLOAD_FOLDER = "uploads"
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
+
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"message": "Flask Roboflow API is running!"}), 200
 
+
 @app.route("/api/detect", methods=["POST"])
 def detect_image():
-    logging.info("📥 Received a request!")
-
-    # ✅ Print headers & request information
-    logging.info(f"🔹 Request Headers: {request.headers}")
-    logging.info(f"🔹 Request Files: {request.files}")
-
     if "image" not in request.files:
-        logging.error("❌ No image received")
+        print("❌ No image received")
         return jsonify({"error": "No image file provided"}), 400
 
     image_file = request.files["image"]
 
-    # ✅ Save the Uploaded Image
+    # Save the uploaded image
     filename = secure_filename(image_file.filename)
     image_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     image_file.save(image_path)
 
-    logging.info(f"✅ Received Image: {filename}")
-    logging.info(f"📂 Saved Image Path: {image_path}")
+    print(f"✅ Received Image: {filename}")
+    print(f"📂 Saved Image Path: {image_path}")
 
-    # ✅ Convert Image to Base64
+    # Convert image to Base64
     with open(image_path, "rb") as img:
         base64_image = base64.b64encode(img.read()).decode("utf-8")
 
-    logging.info("🔄 Converting Image to Base64...")
+    print("🔄 Converting Image to Base64...")
 
-    # ✅ Send Request to Roboflow API
+    # Send request to Roboflow API
     payload = {
         "api_key": ROBOFLOW_API_KEY,
         "inputs": {
             "image": {"type": "base64", "value": base64_image}
-        }
+        },
     }
 
-    logging.info("📤 Sending image to Roboflow...")
+    print("📤 Sending image to Roboflow...")
     response = requests.post(ROBOFLOW_API_URL, json=payload)
 
-    logging.info(f"🔍 Roboflow Response Status: {response.status_code}")
-    logging.info(f"📊 Roboflow Response: {response.text}")
+    print(f"🔍 Roboflow Response Status: {response.status_code}")
+    print(f"📊 Roboflow Response: {response.text}")
 
     if response.status_code == 200:
-        data = response.json()
+        try:
+            data = response.json()
 
-        # ✅ Extract Count & Classes
-        count_objects = data.get("outputs", [{}])[0].get("count_objects", 0)
-        predictions = data.get("outputs", [{}])[0].get("predictions", [])
+            # Debugging: Check the full response structure
+            print(f"🔍 API Response Structure: {data}")
 
-        logging.info(f"🛠️ Extracted Objects: {count_objects}")
-        logging.info(f"📋 Raw Predictions: {predictions}")
+            # ✅ Extract predictions from the correct location
+            outputs = data.get("outputs", [])
+            if not outputs or not isinstance(outputs, list):
+                return jsonify({"error": "Unexpected response format"}), 500
 
-        # ✅ Count Occurrences of Each Class
-        class_counts = {}
-        for obj in predictions:
-            class_name = obj.get("class", "Unknown")
-            class_counts[class_name] = class_counts.get(class_name, 0) + 1
+            first_output = outputs[0] if outputs else {}
+            predictions_data = first_output.get("predictions", {})
 
-        # ✅ Format the Output
-        formatted_result = {
-            "ingredients": count_objects,
-            "details": [{"count": count, "class": c} for c, count in class_counts.items()]
-        }
+            if "image" in predictions_data:
+                predictions = predictions_data["predictions"]  # ✅ Correctly accessing predictions list
+            else:
+                return jsonify({"error": "Predictions not found in response"}), 500
 
-        logging.info(f"✅ Final Response: {formatted_result}")
-        return jsonify(formatted_result), 200
+            print(f"📋 Raw Predictions: {predictions}")
+
+            # ✅ Count occurrences of each class
+            class_counts = {}
+            for obj in predictions:
+                if isinstance(obj, dict):  # Ensure obj is a dictionary
+                    class_name = obj.get("class", "Unknown")
+                    class_counts[class_name] = class_counts.get(class_name, 0) + 1
+
+            # ✅ If only one class is present, return formatted response
+            if len(class_counts) == 1:
+                detected_class = list(class_counts.keys())[0]
+                count = class_counts[detected_class]
+                formatted_result = f"{count} {detected_class}"
+            else:
+                # Otherwise, return full details
+                formatted_result = {
+                    "ingredients": sum(class_counts.values()),
+                    "details": [{"count": count, "class": c} for c, count in class_counts.items()],
+                }
+
+            print(f"✅ Final Response: {formatted_result}")
+            return jsonify({"result": formatted_result}), 200
+        except Exception as e:
+            print(f"⚠️ Error processing API response: {e}")
+            return jsonify({"error": "Error processing API response"}), 500
     else:
         return jsonify({"error": "Failed to get response from Roboflow", "response": response.text}), 500
 
-# ✅ Get Railway-assigned Port
-PORT = int(os.environ.get("PORT", 5000))
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=PORT)
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
