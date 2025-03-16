@@ -75,9 +75,9 @@ def create_conversations_table():
 
 def create_inventory_table():
     """
-    Creates the inventory table if it doesn't exist. 
-    Only 'name' is strictly NOT NULL.
-    'amount' and 'unit' are optional (NULL allowed).
+    Creates an 'inventory' table with only 'id' and 'name'. 
+    'id' is SERIAL PRIMARY KEY, 'name' is TEXT NOT NULL.
+    No amount/unit columns at all.
     """
     conn = get_db_connection()
     if not conn:
@@ -86,13 +86,10 @@ def create_inventory_table():
 
     try:
         with conn.cursor() as cur:
-            # We'll allow amount & unit to be nullable in case they're not used
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS inventory (
                     id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    amount FLOAT,
-                    unit TEXT
+                    name TEXT NOT NULL
                 )
             ''')
             conn.commit()
@@ -115,6 +112,7 @@ def root():
 
 # -----------------------------------------------------------------
 # CONVERSATIONS ENDPOINTS
+# (Unchanged from your code)
 # -----------------------------------------------------------------
 @app.route('/api/conversations', methods=['GET'])
 def get_conversations():
@@ -287,28 +285,26 @@ def delete_conversation(conversation_id):
 # -----------------------------------------------------------------
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
+    """
+    Returns items from the 'inventory' table,
+    which has only (id SERIAL, name TEXT NOT NULL).
+    """
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
 
     try:
         with conn.cursor() as cur:
-            cur.execute('SELECT * FROM inventory ORDER BY id DESC')
+            cur.execute('SELECT id, name FROM inventory ORDER BY id DESC')
             rows = cur.fetchall()
 
-            # columns: id | name | amount | unit
-            # but amount/unit might be null or unused
             inventory_list = []
             for row in rows:
                 item_id = row[0]
                 name = row[1]
-                amount = row[2]  # could be None
-                unit = row[3]    # could be None
                 inventory_list.append({
                     'id': item_id,
                     'name': name,
-                    # only include amount/unit if they exist
-                    # or omit them entirely if you prefer
                 })
 
             return jsonify(inventory_list), 200
@@ -320,9 +316,7 @@ def get_inventory():
 
 @app.route('/api/inventory', methods=['POST'])
 def add_inventory():
-    """
-    Only requires 'name'. 'amount' and 'unit' are optional or ignored.
-    """
+    """Only requires 'name'."""
     data = request.get_json()
     name = data.get('name', '').strip()
 
@@ -335,7 +329,7 @@ def add_inventory():
 
     try:
         with conn.cursor() as cur:
-            # Insert only the name. For amount/unit, just store NULL or skip them.
+            # Insert only the name
             cur.execute('''
                 INSERT INTO inventory (name)
                 VALUES (%s)
@@ -356,9 +350,7 @@ def add_inventory():
 
 @app.route('/api/inventory/<int:item_id>', methods=['PUT'])
 def edit_inventory(item_id):
-    """
-    Update only the name field. 'amount'/'unit' are ignored or set to NULL if you want.
-    """
+    """Update only the 'name' field."""
     data = request.get_json()
     name = data.get('name', '').strip()
 
@@ -395,6 +387,7 @@ def edit_inventory(item_id):
 
 @app.route('/api/inventory/<int:item_id>', methods=['DELETE'])
 def delete_inventory(item_id):
+    """Delete an inventory item by ID."""
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -405,10 +398,10 @@ def delete_inventory(item_id):
                 'DELETE FROM inventory WHERE id = %s RETURNING id',
                 (item_id,)
             )
-            deleted_item = cur.fetchone()
+            deleted_id = cur.fetchone()
             conn.commit()
 
-            if deleted_item:
+            if deleted_id:
                 return jsonify({"message": "Item deleted successfully"}), 200
             else:
                 return jsonify({"error": "Item not found"}), 404
