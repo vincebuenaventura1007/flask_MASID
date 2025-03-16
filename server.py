@@ -27,6 +27,7 @@ def get_db_connection():
 # -----------------------------------------------------------------
 # TABLE CREATION / MIGRATION
 # -----------------------------------------------------------------
+
 def create_conversations_table():
     """
     1) Creates the conversations table if it doesn't exist.
@@ -67,7 +68,6 @@ def create_conversations_table():
                     ADD COLUMN is_saved BOOLEAN NOT NULL DEFAULT FALSE
                 """)
                 conn.commit()
-
     except Exception as e:
         print(f"[ERROR] Failed to create/migrate conversations table: {e}")
     finally:
@@ -75,7 +75,9 @@ def create_conversations_table():
 
 def create_inventory_table():
     """
-    Creates the inventory table if it doesn't exist.
+    Creates the inventory table if it doesn't exist. 
+    Only 'name' is strictly NOT NULL.
+    'amount' and 'unit' are optional (NULL allowed).
     """
     conn = get_db_connection()
     if not conn:
@@ -84,12 +86,13 @@ def create_inventory_table():
 
     try:
         with conn.cursor() as cur:
+            # We'll allow amount & unit to be nullable in case they're not used
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS inventory (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL,
-                    amount FLOAT NOT NULL,
-                    unit TEXT NOT NULL
+                    amount FLOAT,
+                    unit TEXT
                 )
             ''')
             conn.commit()
@@ -205,7 +208,6 @@ def add_conversation():
                 'created_at': new_convo[2].isoformat(),
                 'is_saved': new_convo[3]
             }), 201
-
     except Exception as e:
         print(f"[ERROR] Failed to add conversation: {e}")
         return jsonify({"error": "Failed to add conversation"}), 500
@@ -248,7 +250,6 @@ def update_conversation(conversation_id):
                 }), 200
             else:
                 return jsonify({"error": "Conversation not found"}), 404
-
     except Exception as e:
         print(f"[ERROR] Failed to update conversation: {e}")
         return jsonify({"error": "Failed to update conversation"}), 500
@@ -275,7 +276,6 @@ def delete_conversation(conversation_id):
                 return jsonify({"message": "Conversation deleted successfully"}), 200
             else:
                 return jsonify({"error": "Conversation not found"}), 404
-
     except Exception as e:
         print(f"[ERROR] Failed to delete conversation: {e}")
         return jsonify({"error": "Failed to delete conversation"}), 500
@@ -283,26 +283,34 @@ def delete_conversation(conversation_id):
         conn.close()
 
 # -----------------------------------------------------------------
-# INVENTORY ENDPOINTS
+# INVENTORY ENDPOINTS (Only 'name' is required)
 # -----------------------------------------------------------------
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
+
     try:
         with conn.cursor() as cur:
             cur.execute('SELECT * FROM inventory ORDER BY id DESC')
-            items = cur.fetchall()
-            inventory_list = [
-                {
-                    'id': item[0],
-                    'name': item[1],
-                    'amount': float(item[2]),
-                    'unit': item[3]
-                }
-                for item in items
-            ]
+            rows = cur.fetchall()
+
+            # columns: id | name | amount | unit
+            # but amount/unit might be null or unused
+            inventory_list = []
+            for row in rows:
+                item_id = row[0]
+                name = row[1]
+                amount = row[2]  # could be None
+                unit = row[3]    # could be None
+                inventory_list.append({
+                    'id': item_id,
+                    'name': name,
+                    # only include amount/unit if they exist
+                    # or omit them entirely if you prefer
+                })
+
             return jsonify(inventory_list), 200
     except Exception as e:
         print(f"[ERROR] Failed to fetch inventory: {e}")
@@ -312,13 +320,14 @@ def get_inventory():
 
 @app.route('/api/inventory', methods=['POST'])
 def add_inventory():
+    """
+    Only requires 'name'. 'amount' and 'unit' are optional or ignored.
+    """
     data = request.get_json()
-    name = data.get('name')
-    amount = data.get('amount')
-    unit = data.get('unit')
+    name = data.get('name', '').strip()
 
-    if not name or amount is None or not unit:
-        return jsonify({"error": "Invalid input"}), 400
+    if not name:
+        return jsonify({"error": "Invalid input: 'name' is required"}), 400
 
     conn = get_db_connection()
     if not conn:
@@ -326,18 +335,18 @@ def add_inventory():
 
     try:
         with conn.cursor() as cur:
+            # Insert only the name. For amount/unit, just store NULL or skip them.
             cur.execute('''
-                INSERT INTO inventory (name, amount, unit)
-                VALUES (%s, %s, %s)
-                RETURNING id, name, amount, unit
-            ''', (name, amount, unit))
+                INSERT INTO inventory (name)
+                VALUES (%s)
+                RETURNING id, name
+            ''', (name,))
             new_item = cur.fetchone()
             conn.commit()
+
             return jsonify({
                 'id': new_item[0],
-                'name': new_item[1],
-                'amount': float(new_item[2]),
-                'unit': new_item[3]
+                'name': new_item[1]
             }), 201
     except Exception as e:
         print(f"[ERROR] Failed to add inventory item: {e}")
@@ -347,13 +356,14 @@ def add_inventory():
 
 @app.route('/api/inventory/<int:item_id>', methods=['PUT'])
 def edit_inventory(item_id):
+    """
+    Update only the name field. 'amount'/'unit' are ignored or set to NULL if you want.
+    """
     data = request.get_json()
-    name = data.get('name')
-    amount = data.get('amount')
-    unit = data.get('unit')
+    name = data.get('name', '').strip()
 
-    if not name or amount is None or not unit:
-        return jsonify({"error": "Invalid input"}), 400
+    if not name:
+        return jsonify({"error": "Invalid input: 'name' is required"}), 400
 
     conn = get_db_connection()
     if not conn:
@@ -363,10 +373,10 @@ def edit_inventory(item_id):
         with conn.cursor() as cur:
             cur.execute('''
                 UPDATE inventory
-                   SET name = %s, amount = %s, unit = %s
+                   SET name = %s
                  WHERE id = %s
-             RETURNING id, name, amount, unit
-            ''', (name, amount, unit, item_id))
+             RETURNING id, name
+            ''', (name, item_id))
             updated_item = cur.fetchone()
             conn.commit()
 
@@ -374,8 +384,6 @@ def edit_inventory(item_id):
                 return jsonify({
                     'id': updated_item[0],
                     'name': updated_item[1],
-                    'amount': float(updated_item[2]),
-                    'unit': updated_item[3]
                 }), 200
             else:
                 return jsonify({"error": "Item not found"}), 404
