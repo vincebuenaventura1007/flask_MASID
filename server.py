@@ -40,7 +40,7 @@ def create_conversations_table():
 
     try:
         with conn.cursor() as cur:
-            # Create the table if it doesn't already exist
+            # Create table if not exists
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS conversations (
                     id SERIAL PRIMARY KEY,
@@ -51,7 +51,7 @@ def create_conversations_table():
             ''')
             conn.commit()
 
-            # Now check if 'is_saved' column actually exists
+            # Check if 'is_saved' column exists
             cur.execute("""
                 SELECT column_name
                   FROM information_schema.columns
@@ -60,7 +60,7 @@ def create_conversations_table():
             """)
             column_exists = cur.fetchone()
 
-            # If the column doesn't exist, ALTER the table to add it
+            # If missing, add it
             if not column_exists:
                 print("[INFO] Adding 'is_saved' column to 'conversations' table...")
                 cur.execute("""
@@ -75,8 +75,7 @@ def create_conversations_table():
 
 def create_inventory_table():
     """
-    Creates an 'inventory' table with only 'id' and 'name'. 
-    'id' is SERIAL PRIMARY KEY, 'name' is TEXT NOT NULL.
+    Creates an 'inventory' table with only 'id' (SERIAL) and 'name' (TEXT NOT NULL).
     No amount/unit columns at all.
     """
     conn = get_db_connection()
@@ -98,7 +97,7 @@ def create_inventory_table():
     finally:
         conn.close()
 
-# Call table creation & migrations at startup
+# Create tables on startup
 with app.app_context():
     create_inventory_table()
     create_conversations_table()
@@ -112,7 +111,6 @@ def root():
 
 # -----------------------------------------------------------------
 # CONVERSATIONS ENDPOINTS
-# (Unchanged from your code)
 # -----------------------------------------------------------------
 @app.route('/api/conversations', methods=['GET'])
 def get_conversations():
@@ -129,6 +127,7 @@ def get_conversations():
               ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
+
             results = []
             for row in rows:
                 results.append({
@@ -138,7 +137,6 @@ def get_conversations():
                     'is_saved': row[3],
                 })
             return jsonify(results), 200
-
     except Exception as e:
         print(f"[ERROR] Failed to fetch conversations: {e}")
         return jsonify({"error": "Failed to fetch conversations"}), 500
@@ -170,7 +168,6 @@ def get_saved_conversations():
                     'is_saved': row[3],
                 })
             return jsonify(results), 200
-
     except Exception as e:
         print(f"[ERROR] Failed to fetch saved conversations: {e}")
         return jsonify({"error": "Failed to fetch saved conversations"}), 500
@@ -215,14 +212,14 @@ def add_conversation():
 @app.route('/api/conversations/<int:conversation_id>', methods=['PUT'])
 def update_conversation(conversation_id):
     """
-    Update conversation fields, specifically is_saved.
-    Example request body: { "is_saved": true }
+    Update a conversation's is_saved field.
+    Request body: { "is_saved": true/false }
     """
     data = request.get_json()
-    is_saved = data.get('is_saved')  # can be True or False
+    is_saved = data.get('is_saved')
 
     if is_saved is None:
-        return jsonify({"error": "Missing 'is_saved' field in request body"}), 400
+        return jsonify({"error": "Missing 'is_saved' field"}), 400
 
     conn = get_db_connection()
     if not conn:
@@ -285,10 +282,7 @@ def delete_conversation(conversation_id):
 # -----------------------------------------------------------------
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
-    """
-    Returns items from the 'inventory' table,
-    which has only (id SERIAL, name TEXT NOT NULL).
-    """
+    """Return items from the 'inventory' table: (id SERIAL, name TEXT NOT NULL)."""
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -300,11 +294,9 @@ def get_inventory():
 
             inventory_list = []
             for row in rows:
-                item_id = row[0]
-                name = row[1]
                 inventory_list.append({
-                    'id': item_id,
-                    'name': name,
+                    'id': row[0],
+                    'name': row[1],
                 })
 
             return jsonify(inventory_list), 200
@@ -316,7 +308,10 @@ def get_inventory():
 
 @app.route('/api/inventory', methods=['POST'])
 def add_inventory():
-    """Only requires 'name'."""
+    """
+    Only requires 'name'.
+    POST body: { "name": "<ingredient>" }
+    """
     data = request.get_json()
     name = data.get('name', '').strip()
 
@@ -329,7 +324,6 @@ def add_inventory():
 
     try:
         with conn.cursor() as cur:
-            # Insert only the name
             cur.execute('''
                 INSERT INTO inventory (name)
                 VALUES (%s)
@@ -350,7 +344,10 @@ def add_inventory():
 
 @app.route('/api/inventory/<int:item_id>', methods=['PUT'])
 def edit_inventory(item_id):
-    """Update only the 'name' field."""
+    """
+    Update only the 'name' field.
+    PUT body: { "name": "<updated name>" }
+    """
     data = request.get_json()
     name = data.get('name', '').strip()
 
