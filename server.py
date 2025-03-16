@@ -12,7 +12,6 @@ CORS(app)
 # -----------------------------------------------------------------
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    # Provide a default or your own connection string here.
     "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway"
 )
 
@@ -26,53 +25,80 @@ def get_db_connection():
         return None
 
 # -----------------------------------------------------------------
-# TABLE CREATION
+# TABLE CREATION / MIGRATION
 # -----------------------------------------------------------------
 def create_conversations_table():
     """
-    Creates the conversations table with an 'is_saved' column if it doesn't exist.
-    If your DB already has 'conversations' but no 'is_saved', run an ALTER TABLE:
-      ALTER TABLE conversations ADD COLUMN is_saved BOOLEAN NOT NULL DEFAULT FALSE;
+    1) Creates the conversations table if it doesn't exist.
+    2) Ensures the is_saved column exists, adding it if missing.
     """
     conn = get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS conversations (
-                        id SERIAL PRIMARY KEY,
-                        conversation_text TEXT NOT NULL,
-                        created_at TIMESTAMP NOT NULL,
-                        is_saved BOOLEAN NOT NULL DEFAULT FALSE
-                    )
-                ''')
+    if not conn:
+        print("[ERROR] No DB connection in create_conversations_table()")
+        return
+
+    try:
+        with conn.cursor() as cur:
+            # Create the table if it doesn't already exist
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id SERIAL PRIMARY KEY,
+                    conversation_text TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    is_saved BOOLEAN NOT NULL DEFAULT FALSE
+                )
+            ''')
+            conn.commit()
+
+            # Now check if 'is_saved' column actually exists
+            cur.execute("""
+                SELECT column_name
+                  FROM information_schema.columns
+                 WHERE table_name='conversations'
+                   AND column_name='is_saved'
+            """)
+            column_exists = cur.fetchone()
+
+            # If the column doesn't exist, ALTER the table to add it
+            if not column_exists:
+                print("[INFO] Adding 'is_saved' column to 'conversations' table...")
+                cur.execute("""
+                    ALTER TABLE conversations
+                    ADD COLUMN is_saved BOOLEAN NOT NULL DEFAULT FALSE
+                """)
                 conn.commit()
-        except Exception as e:
-            print(f"[ERROR] Failed to create conversations table: {e}")
-        finally:
-            conn.close()
+
+    except Exception as e:
+        print(f"[ERROR] Failed to create/migrate conversations table: {e}")
+    finally:
+        conn.close()
 
 def create_inventory_table():
-    """Creates the inventory table if it doesn't exist."""
+    """
+    Creates the inventory table if it doesn't exist.
+    """
     conn = get_db_connection()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS inventory (
-                        id SERIAL PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        amount FLOAT NOT NULL,
-                        unit TEXT NOT NULL
-                    )
-                ''')
-                conn.commit()
-        except Exception as e:
-            print(f"[ERROR] Failed to create inventory table: {e}")
-        finally:
-            conn.close()
+    if not conn:
+        print("[ERROR] No DB connection in create_inventory_table()")
+        return
 
-# Call table creation at startup
+    try:
+        with conn.cursor() as cur:
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS inventory (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    amount FLOAT NOT NULL,
+                    unit TEXT NOT NULL
+                )
+            ''')
+            conn.commit()
+    except Exception as e:
+        print(f"[ERROR] Failed to create inventory table: {e}")
+    finally:
+        conn.close()
+
+# Call table creation & migrations at startup
 with app.app_context():
     create_inventory_table()
     create_conversations_table()
@@ -98,11 +124,10 @@ def get_conversations():
         with conn.cursor() as cur:
             cur.execute('''
                 SELECT id, conversation_text, created_at, is_saved
-                FROM conversations
-                ORDER BY created_at DESC
+                  FROM conversations
+              ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
-
             results = []
             for row in rows:
                 results.append({
@@ -130,12 +155,11 @@ def get_saved_conversations():
         with conn.cursor() as cur:
             cur.execute('''
                 SELECT id, conversation_text, created_at, is_saved
-                FROM conversations
-                WHERE is_saved = TRUE
-                ORDER BY created_at DESC
+                  FROM conversations
+                 WHERE is_saved = TRUE
+              ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
-
             results = []
             for row in rows:
                 results.append({
@@ -197,7 +221,6 @@ def update_conversation(conversation_id):
     data = request.get_json()
     is_saved = data.get('is_saved')  # can be True or False
 
-    # Validate that is_saved was provided
     if is_saved is None:
         return jsonify({"error": "Missing 'is_saved' field in request body"}), 400
 
@@ -209,9 +232,9 @@ def update_conversation(conversation_id):
         with conn.cursor() as cur:
             cur.execute('''
                 UPDATE conversations
-                SET is_saved = %s
-                WHERE id = %s
-                RETURNING id, conversation_text, created_at, is_saved
+                   SET is_saved = %s
+                 WHERE id = %s
+             RETURNING id, conversation_text, created_at, is_saved
             ''', (is_saved, conversation_id))
             updated_row = cur.fetchone()
             conn.commit()
@@ -241,7 +264,10 @@ def delete_conversation(conversation_id):
 
     try:
         with conn.cursor() as cur:
-            cur.execute('DELETE FROM conversations WHERE id = %s RETURNING id', (conversation_id,))
+            cur.execute(
+                'DELETE FROM conversations WHERE id = %s RETURNING id',
+                (conversation_id,)
+            )
             deleted_id = cur.fetchone()
             conn.commit()
 
@@ -257,7 +283,7 @@ def delete_conversation(conversation_id):
         conn.close()
 
 # -----------------------------------------------------------------
-# INVENTORY ENDPOINTS (UNCHANGED)
+# INVENTORY ENDPOINTS
 # -----------------------------------------------------------------
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
@@ -337,9 +363,9 @@ def edit_inventory(item_id):
         with conn.cursor() as cur:
             cur.execute('''
                 UPDATE inventory
-                SET name = %s, amount = %s, unit = %s
-                WHERE id = %s
-                RETURNING id, name, amount, unit
+                   SET name = %s, amount = %s, unit = %s
+                 WHERE id = %s
+             RETURNING id, name, amount, unit
             ''', (name, amount, unit, item_id))
             updated_item = cur.fetchone()
             conn.commit()
@@ -367,7 +393,10 @@ def delete_inventory(item_id):
 
     try:
         with conn.cursor() as cur:
-            cur.execute('DELETE FROM inventory WHERE id = %s RETURNING id', (item_id,))
+            cur.execute(
+                'DELETE FROM inventory WHERE id = %s RETURNING id',
+                (item_id,)
+            )
             deleted_item = cur.fetchone()
             conn.commit()
 
