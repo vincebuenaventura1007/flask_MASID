@@ -27,11 +27,11 @@ def get_db_connection():
 # -----------------------------------------------------------------
 # TABLE CREATION / MIGRATION
 # -----------------------------------------------------------------
-
 def create_conversations_table():
     """
-    1) Creates the conversations table if it doesn't exist.
-    2) Ensures the is_saved column exists, adding it if missing.
+    Creates/updates the 'conversations' table with fields:
+      - id, conversation_text, created_at, is_saved,
+      - rating_sum, rating_count, photo_base64
     """
     conn = get_db_connection()
     if not conn:
@@ -40,7 +40,7 @@ def create_conversations_table():
 
     try:
         with conn.cursor() as cur:
-            # Create table if not exists
+            # 1) Ensure main table & columns exist
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS conversations (
                     id SERIAL PRIMARY KEY,
@@ -51,23 +51,42 @@ def create_conversations_table():
             ''')
             conn.commit()
 
-            # Check if 'is_saved' column exists
+            # 2) Check if columns exist, if not, add them
+            # Check 'is_saved' (done below, but we do an extra check)
             cur.execute("""
                 SELECT column_name
                   FROM information_schema.columns
                  WHERE table_name='conversations'
-                   AND column_name='is_saved'
             """)
-            column_exists = cur.fetchone()
+            existing_cols = [row[0] for row in cur.fetchall()]
 
-            # If missing, add it
-            if not column_exists:
+            # rating_sum float default 0
+            if 'rating_sum' not in existing_cols:
+                print("[INFO] Adding 'rating_sum' column to 'conversations' table...")
+                cur.execute("ALTER TABLE conversations ADD COLUMN rating_sum FLOAT DEFAULT 0")
+                conn.commit()
+
+            # rating_count integer default 0
+            if 'rating_count' not in existing_cols:
+                print("[INFO] Adding 'rating_count' column to 'conversations' table...")
+                cur.execute("ALTER TABLE conversations ADD COLUMN rating_count INT DEFAULT 0")
+                conn.commit()
+
+            # photo_base64 text (nullable)
+            if 'photo_base64' not in existing_cols:
+                print("[INFO] Adding 'photo_base64' column to 'conversations' table...")
+                cur.execute("ALTER TABLE conversations ADD COLUMN photo_base64 TEXT")
+                conn.commit()
+
+            # is_saved column if missing
+            if 'is_saved' not in existing_cols:
                 print("[INFO] Adding 'is_saved' column to 'conversations' table...")
                 cur.execute("""
                     ALTER TABLE conversations
                     ADD COLUMN is_saved BOOLEAN NOT NULL DEFAULT FALSE
                 """)
                 conn.commit()
+
     except Exception as e:
         print(f"[ERROR] Failed to create/migrate conversations table: {e}")
     finally:
@@ -76,7 +95,6 @@ def create_conversations_table():
 def create_inventory_table():
     """
     Creates an 'inventory' table with only 'id' (SERIAL) and 'name' (TEXT NOT NULL).
-    No amount/unit columns at all.
     """
     conn = get_db_connection()
     if not conn:
@@ -114,7 +132,10 @@ def root():
 # -----------------------------------------------------------------
 @app.route('/api/conversations', methods=['GET'])
 def get_conversations():
-    """Fetch all conversations, ordered by newest first."""
+    """
+    Fetch all conversations, ordered by newest first,
+    returning rating_sum, rating_count, average_rating, photo_base64, etc.
+    """
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -122,20 +143,44 @@ def get_conversations():
     try:
         with conn.cursor() as cur:
             cur.execute('''
-                SELECT id, conversation_text, created_at, is_saved
-                  FROM conversations
-              ORDER BY created_at DESC
+                SELECT
+                    id,
+                    conversation_text,
+                    created_at,
+                    is_saved,
+                    rating_sum,
+                    rating_count,
+                    photo_base64
+                FROM conversations
+                ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
 
             results = []
             for row in rows:
+                conv_id         = row[0]
+                conversation    = row[1]
+                created_at      = row[2].isoformat()
+                is_saved        = row[3]
+                rating_sum      = float(row[4])
+                rating_count    = int(row[5])
+                photo_base64    = row[6]
+
+                avg_rating = 0.0
+                if rating_count > 0:
+                    avg_rating = rating_sum / rating_count
+
                 results.append({
-                    'id': row[0],
-                    'conversation': row[1],
-                    'created_at': row[2].isoformat(),
-                    'is_saved': row[3],
+                    'id': conv_id,
+                    'conversation': conversation,
+                    'created_at': created_at,
+                    'is_saved': is_saved,
+                    'rating_sum': rating_sum,
+                    'rating_count': rating_count,
+                    'average_rating': avg_rating,
+                    'photo_base64': photo_base64
                 })
+
             return jsonify(results), 200
     except Exception as e:
         print(f"[ERROR] Failed to fetch conversations: {e}")
@@ -145,7 +190,10 @@ def get_conversations():
 
 @app.route('/api/conversations/saved', methods=['GET'])
 def get_saved_conversations():
-    """Fetch only saved conversations (is_saved = TRUE), ordered by newest first."""
+    """
+    Fetch only saved conversations (is_saved = TRUE), ordered by newest first,
+    returning rating_sum, rating_count, average_rating, photo_base64, etc.
+    """
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -153,19 +201,43 @@ def get_saved_conversations():
     try:
         with conn.cursor() as cur:
             cur.execute('''
-                SELECT id, conversation_text, created_at, is_saved
-                  FROM conversations
-                 WHERE is_saved = TRUE
-              ORDER BY created_at DESC
+                SELECT
+                    id,
+                    conversation_text,
+                    created_at,
+                    is_saved,
+                    rating_sum,
+                    rating_count,
+                    photo_base64
+                FROM conversations
+                WHERE is_saved = TRUE
+                ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
+
             results = []
             for row in rows:
+                conv_id         = row[0]
+                conversation    = row[1]
+                created_at      = row[2].isoformat()
+                is_saved        = row[3]
+                rating_sum      = float(row[4])
+                rating_count    = int(row[5])
+                photo_base64    = row[6]
+
+                avg_rating = 0.0
+                if rating_count > 0:
+                    avg_rating = rating_sum / rating_count
+
                 results.append({
-                    'id': row[0],
-                    'conversation': row[1],
-                    'created_at': row[2].isoformat(),
-                    'is_saved': row[3],
+                    'id': conv_id,
+                    'conversation': conversation,
+                    'created_at': created_at,
+                    'is_saved': is_saved,
+                    'rating_sum': rating_sum,
+                    'rating_count': rating_count,
+                    'average_rating': avg_rating,
+                    'photo_base64': photo_base64
                 })
             return jsonify(results), 200
     except Exception as e:
@@ -176,7 +248,10 @@ def get_saved_conversations():
 
 @app.route('/api/conversations', methods=['POST'])
 def add_conversation():
-    """Add a new conversation to the database."""
+    """
+    Add a new conversation (recipe text). 
+    POST body: { "conversation": "<text>" }
+    """
     data = request.get_json()
     conversation_text = data.get('conversation', '').strip()
 
@@ -190,10 +265,10 @@ def add_conversation():
     try:
         with conn.cursor() as cur:
             cur.execute('''
-                INSERT INTO conversations (conversation_text, created_at, is_saved)
-                VALUES (%s, %s, %s)
-                RETURNING id, conversation_text, created_at, is_saved
-            ''', (conversation_text, datetime.utcnow(), False))
+                INSERT INTO conversations (conversation_text, created_at, is_saved, rating_sum, rating_count, photo_base64)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, conversation_text, created_at, is_saved, rating_sum, rating_count, photo_base64
+            ''', (conversation_text, datetime.utcnow(), False, 0, 0, None))
             new_convo = cur.fetchone()
             conn.commit()
 
@@ -201,7 +276,11 @@ def add_conversation():
                 'id': new_convo[0],
                 'conversation': new_convo[1],
                 'created_at': new_convo[2].isoformat(),
-                'is_saved': new_convo[3]
+                'is_saved': new_convo[3],
+                'rating_sum': float(new_convo[4]),
+                'rating_count': int(new_convo[5]),
+                'photo_base64': new_convo[6],
+                'average_rating': 0.0
             }), 201
     except Exception as e:
         print(f"[ERROR] Failed to add conversation: {e}")
@@ -212,14 +291,23 @@ def add_conversation():
 @app.route('/api/conversations/<int:conversation_id>', methods=['PUT'])
 def update_conversation(conversation_id):
     """
-    Update a conversation's is_saved field.
-    Request body: { "is_saved": true/false }
+    Update a conversation row with any of these fields:
+      - is_saved (bool)
+      - rating (a single rating to add to rating_sum, rating_count)
+      - photo_base64 (attach dish image)
+    Example body:
+      {
+        "is_saved": true,
+        "rating": 4,
+        "photo_base64": "<base64 string>"
+      }
+    We'll re-compute average rating on the fly in the response.
     """
     data = request.get_json()
+    # rating is optional, is_saved is optional, photo_base64 is optional
     is_saved = data.get('is_saved')
-
-    if is_saved is None:
-        return jsonify({"error": "Missing 'is_saved' field"}), 400
+    new_rating = data.get('rating')   # user rating from 1..5 
+    photo_b64 = data.get('photo_base64')
 
     conn = get_db_connection()
     if not conn:
@@ -227,21 +315,74 @@ def update_conversation(conversation_id):
 
     try:
         with conn.cursor() as cur:
+            # First fetch existing row
+            cur.execute('''
+                SELECT id, conversation_text, created_at, is_saved, rating_sum, rating_count, photo_base64
+                  FROM conversations
+                 WHERE id = %s
+            ''', (conversation_id,))
+            existing = cur.fetchone()
+            if not existing:
+                return jsonify({"error": "Conversation not found"}), 404
+
+            current_is_saved   = existing[3]
+            current_rating_sum = float(existing[4])
+            current_rating_cnt = int(existing[5])
+            current_photo_b64  = existing[6]
+
+            # Update is_saved if provided
+            if is_saved is not None:
+                current_is_saved = bool(is_saved)
+
+            # If rating is provided, update rating_sum & rating_count
+            if new_rating is not None:
+                # e.g. new_rating=4 => rating_sum+=4 => rating_count+=1
+                # you can clamp rating to 1..5 if needed
+                rating_value = float(new_rating)
+                current_rating_sum += rating_value
+                current_rating_cnt += 1
+
+            # If photo_base64 is provided, store it
+            if photo_b64 is not None:
+                current_photo_b64 = photo_b64
+
+            # Now write back
             cur.execute('''
                 UPDATE conversations
-                   SET is_saved = %s
+                   SET is_saved = %s,
+                       rating_sum = %s,
+                       rating_count = %s,
+                       photo_base64 = %s
                  WHERE id = %s
-             RETURNING id, conversation_text, created_at, is_saved
-            ''', (is_saved, conversation_id))
-            updated_row = cur.fetchone()
+             RETURNING 
+                id, conversation_text, created_at, is_saved, rating_sum, rating_count, photo_base64
+            ''', (
+                current_is_saved,
+                current_rating_sum,
+                current_rating_cnt,
+                current_photo_b64,
+                conversation_id
+            ))
+            updated = cur.fetchone()
             conn.commit()
 
-            if updated_row:
+            if updated:
+                # Calculate average rating
+                sum_val = float(updated[4])
+                count_val = int(updated[5])
+                avg_rating = 0.0
+                if count_val > 0:
+                    avg_rating = sum_val / count_val
+
                 return jsonify({
-                    'id': updated_row[0],
-                    'conversation': updated_row[1],
-                    'created_at': updated_row[2].isoformat(),
-                    'is_saved': updated_row[3]
+                    'id': updated[0],
+                    'conversation': updated[1],
+                    'created_at': updated[2].isoformat(),
+                    'is_saved': updated[3],
+                    'rating_sum': sum_val,
+                    'rating_count': count_val,
+                    'average_rating': avg_rating,
+                    'photo_base64': updated[6]
                 }), 200
             else:
                 return jsonify({"error": "Conversation not found"}), 404
@@ -278,7 +419,7 @@ def delete_conversation(conversation_id):
         conn.close()
 
 # -----------------------------------------------------------------
-# INVENTORY ENDPOINTS (Only 'name' is required)
+# INVENTORY ENDPOINTS
 # -----------------------------------------------------------------
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
