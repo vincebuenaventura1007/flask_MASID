@@ -47,7 +47,7 @@ def create_conversations_table():
 
     try:
         with conn.cursor() as cur:
-            # 1) Ensure main table & columns exist
+            # Create main table if it doesn't exist
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS conversations (
                     id SERIAL PRIMARY KEY,
@@ -59,7 +59,7 @@ def create_conversations_table():
             ''')
             conn.commit()
 
-            # 2) Check columns. If missing, add them
+            # Check for additional columns and add if missing
             cur.execute("""
                 SELECT column_name
                   FROM information_schema.columns
@@ -152,7 +152,6 @@ def get_conversations():
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('''
@@ -170,7 +169,6 @@ def get_conversations():
                 ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
-
             results = []
             for row in rows:
                 conv_id      = row[0]
@@ -199,7 +197,6 @@ def get_conversations():
                     'photo_base64': photo_base64,
                     'title': title
                 })
-
             return jsonify(results), 200
     except Exception as e:
         print(f"[ERROR] Failed to fetch conversations: {e}")
@@ -215,7 +212,6 @@ def get_saved_conversations():
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('''
@@ -234,7 +230,6 @@ def get_saved_conversations():
                 ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
-
             results = []
             for row in rows:
                 conv_id      = row[0]
@@ -278,7 +273,6 @@ def get_shared_conversations():
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('''
@@ -297,7 +291,6 @@ def get_shared_conversations():
                 ORDER BY created_at DESC
             ''')
             rows = cur.fetchall()
-
             results = []
             for row in rows:
                 conv_id      = row[0]
@@ -347,14 +340,11 @@ def add_conversation():
     data = request.get_json()
     conversation_text = data.get('conversation', '').strip()
     title = data.get('title', '').strip()
-
     if not conversation_text:
         return jsonify({"error": "No conversation text provided"}), 400
-
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('''
@@ -382,7 +372,6 @@ def add_conversation():
             ''', (conversation_text, datetime.utcnow(), False, False, 0, 0, None, title if title else None))
             new_convo = cur.fetchone()
             conn.commit()
-
             avg_rating = 0.0
             return jsonify({
                 'id': new_convo[0],
@@ -426,11 +415,9 @@ def update_conversation(conversation_id):
     new_rating = data.get('rating')
     photo_b64 = data.get('photo_base64')
     new_title = data.get('title', '').strip()
-
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('''
@@ -450,14 +437,12 @@ def update_conversation(conversation_id):
             existing = cur.fetchone()
             if not existing:
                 return jsonify({"error": "Conversation not found"}), 404
-
             current_is_saved   = existing[3]
             current_is_shared  = existing[4]
             current_rating_sum = float(existing[5])
             current_rating_cnt = int(existing[6])
             current_photo_b64  = existing[7]
             current_title      = existing[8] if existing[8] else None
-
             if is_saved is not None:
                 current_is_saved = bool(is_saved)
             if new_is_shared is not None:
@@ -470,7 +455,6 @@ def update_conversation(conversation_id):
                 current_photo_b64 = photo_b64
             if new_title:
                 current_title = new_title
-
             cur.execute('''
                 UPDATE conversations
                    SET is_saved = %s,
@@ -501,14 +485,12 @@ def update_conversation(conversation_id):
             ))
             updated = cur.fetchone()
             conn.commit()
-
             if updated:
                 sum_val   = float(updated[5])
                 count_val = int(updated[6])
                 avg_rating = 0.0
                 if count_val > 0:
                     avg_rating = sum_val / count_val
-
                 return jsonify({
                     'id': updated[0],
                     'conversation': updated[1],
@@ -535,7 +517,6 @@ def delete_conversation(conversation_id):
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -544,7 +525,6 @@ def delete_conversation(conversation_id):
             )
             deleted_id = cur.fetchone()
             conn.commit()
-
             if deleted_id:
                 return jsonify({"message": "Conversation deleted successfully"}), 200
             else:
@@ -564,19 +544,16 @@ def get_inventory():
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('SELECT id, name FROM inventory ORDER BY id DESC')
             rows = cur.fetchall()
-
             inventory_list = []
             for row in rows:
                 inventory_list.append({
                     'id': row[0],
                     'name': row[1],
                 })
-
             return jsonify(inventory_list), 200
     except Exception as e:
         print(f"[ERROR] Failed to fetch inventory: {e}")
@@ -592,14 +569,11 @@ def add_inventory():
     """
     data = request.get_json()
     name = data.get('name', '').strip()
-
     if not name:
         return jsonify({"error": "Invalid input: 'name' is required"}), 400
-
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('''
@@ -609,7 +583,6 @@ def add_inventory():
             ''', (name,))
             new_item = cur.fetchone()
             conn.commit()
-
             return jsonify({
                 'id': new_item[0],
                 'name': new_item[1]
@@ -628,14 +601,11 @@ def edit_inventory(item_id):
     """
     data = request.get_json()
     name = data.get('name', '').strip()
-
     if not name:
         return jsonify({"error": "Invalid input: 'name' is required"}), 400
-
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute('''
@@ -646,7 +616,6 @@ def edit_inventory(item_id):
             ''', (name, item_id))
             updated_item = cur.fetchone()
             conn.commit()
-
             if updated_item:
                 return jsonify({
                     'id': updated_item[0],
@@ -666,7 +635,6 @@ def delete_inventory(item_id):
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
-
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -675,7 +643,6 @@ def delete_inventory(item_id):
             )
             deleted_id = cur.fetchone()
             conn.commit()
-
             if deleted_id:
                 return jsonify({"message": "Item deleted successfully"}), 200
             else:
