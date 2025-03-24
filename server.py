@@ -34,6 +34,7 @@ def create_conversations_table():
       - conversation_text TEXT NOT NULL
       - created_at TIMESTAMP NOT NULL
       - is_saved BOOLEAN NOT NULL DEFAULT FALSE
+      - is_shared BOOLEAN NOT NULL DEFAULT FALSE
       - rating_sum FLOAT DEFAULT 0
       - rating_count INT DEFAULT 0
       - photo_base64 TEXT
@@ -52,7 +53,8 @@ def create_conversations_table():
                     id SERIAL PRIMARY KEY,
                     conversation_text TEXT NOT NULL,
                     created_at TIMESTAMP NOT NULL,
-                    is_saved BOOLEAN NOT NULL DEFAULT FALSE
+                    is_saved BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_shared BOOLEAN NOT NULL DEFAULT FALSE
                 )
             ''')
             conn.commit()
@@ -65,25 +67,21 @@ def create_conversations_table():
             """)
             existing_cols = [row[0] for row in cur.fetchall()]
 
-            # rating_sum float default 0
             if 'rating_sum' not in existing_cols:
                 print("[INFO] Adding 'rating_sum' column to 'conversations' table...")
                 cur.execute("ALTER TABLE conversations ADD COLUMN rating_sum FLOAT DEFAULT 0")
                 conn.commit()
 
-            # rating_count integer default 0
             if 'rating_count' not in existing_cols:
                 print("[INFO] Adding 'rating_count' column to 'conversations' table...")
                 cur.execute("ALTER TABLE conversations ADD COLUMN rating_count INT DEFAULT 0")
                 conn.commit()
 
-            # photo_base64 text
             if 'photo_base64' not in existing_cols:
                 print("[INFO] Adding 'photo_base64' column to 'conversations' table...")
                 cur.execute("ALTER TABLE conversations ADD COLUMN photo_base64 TEXT")
                 conn.commit()
 
-            # is_saved is already in the initial create, but in case it wasn't
             if 'is_saved' not in existing_cols:
                 print("[INFO] Adding 'is_saved' column to 'conversations' table...")
                 cur.execute("""
@@ -92,10 +90,14 @@ def create_conversations_table():
                 """)
                 conn.commit()
 
-            # title text
             if 'title' not in existing_cols:
                 print("[INFO] Adding 'title' column to 'conversations' table...")
                 cur.execute("ALTER TABLE conversations ADD COLUMN title TEXT")
+                conn.commit()
+            
+            if 'is_shared' not in existing_cols:
+                print("[INFO] Adding 'is_shared' column to 'conversations' table...")
+                cur.execute("ALTER TABLE conversations ADD COLUMN is_shared BOOLEAN NOT NULL DEFAULT FALSE")
                 conn.commit()
 
     except Exception as e:
@@ -144,8 +146,8 @@ def root():
 @app.route('/api/conversations', methods=['GET'])
 def get_conversations():
     """
-    Fetch all conversations, ordered by newest first,
-    returning rating_sum, rating_count, average_rating, photo_base64, title, etc.
+    Fetch all conversations, ordered by newest first.
+    Returns all fields including is_saved and is_shared.
     """
     conn = get_db_connection()
     if not conn:
@@ -159,6 +161,7 @@ def get_conversations():
                     conversation_text,
                     created_at,
                     is_saved,
+                    is_shared,
                     rating_sum,
                     rating_count,
                     photo_base64,
@@ -170,14 +173,15 @@ def get_conversations():
 
             results = []
             for row in rows:
-                conv_id         = row[0]
-                conversation    = row[1]
-                created_at      = row[2].isoformat()
-                is_saved        = row[3]
-                rating_sum      = float(row[4])
-                rating_count    = int(row[5])
-                photo_base64    = row[6]
-                title           = row[7] if row[7] else None
+                conv_id      = row[0]
+                conversation = row[1]
+                created_at   = row[2].isoformat()
+                is_saved     = row[3]
+                is_shared    = row[4]
+                rating_sum   = float(row[5])
+                rating_count = int(row[6])
+                photo_base64 = row[7]
+                title        = row[8] if row[8] else None
 
                 avg_rating = 0.0
                 if rating_count > 0:
@@ -188,6 +192,7 @@ def get_conversations():
                     'conversation': conversation,
                     'created_at': created_at,
                     'is_saved': is_saved,
+                    'is_shared': is_shared,
                     'rating_sum': rating_sum,
                     'rating_count': rating_count,
                     'average_rating': avg_rating,
@@ -205,8 +210,7 @@ def get_conversations():
 @app.route('/api/conversations/saved', methods=['GET'])
 def get_saved_conversations():
     """
-    Fetch only saved conversations (is_saved = TRUE), ordered by newest first,
-    returning rating_sum, rating_count, average_rating, photo_base64, title, etc.
+    Fetch only favorited conversations (is_saved = TRUE), ordered by newest first.
     """
     conn = get_db_connection()
     if not conn:
@@ -220,6 +224,7 @@ def get_saved_conversations():
                     conversation_text,
                     created_at,
                     is_saved,
+                    is_shared,
                     rating_sum,
                     rating_count,
                     photo_base64,
@@ -232,14 +237,15 @@ def get_saved_conversations():
 
             results = []
             for row in rows:
-                conv_id         = row[0]
-                conversation    = row[1]
-                created_at      = row[2].isoformat()
-                is_saved        = row[3]
-                rating_sum      = float(row[4])
-                rating_count    = int(row[5])
-                photo_base64    = row[6]
-                title           = row[7] if row[7] else None
+                conv_id      = row[0]
+                conversation = row[1]
+                created_at   = row[2].isoformat()
+                is_saved     = row[3]
+                is_shared    = row[4]
+                rating_sum   = float(row[5])
+                rating_count = int(row[6])
+                photo_base64 = row[7]
+                title        = row[8] if row[8] else None
 
                 avg_rating = 0.0
                 if rating_count > 0:
@@ -250,6 +256,7 @@ def get_saved_conversations():
                     'conversation': conversation,
                     'created_at': created_at,
                     'is_saved': is_saved,
+                    'is_shared': is_shared,
                     'rating_sum': rating_sum,
                     'rating_count': rating_count,
                     'average_rating': avg_rating,
@@ -267,8 +274,7 @@ def get_saved_conversations():
 def add_conversation():
     """
     Add a new conversation (recipe text).
-    Optional 'title' if you want to set it on creation.
-
+    Optional 'title' if provided. Both is_saved and is_shared are defaulted to False.
     POST body:
     {
       "conversation": "<text>",
@@ -293,22 +299,24 @@ def add_conversation():
                     conversation_text,
                     created_at,
                     is_saved,
+                    is_shared,
                     rating_sum,
                     rating_count,
                     photo_base64,
                     title
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING
                     id,
                     conversation_text,
                     created_at,
                     is_saved,
+                    is_shared,
                     rating_sum,
                     rating_count,
                     photo_base64,
                     title
-            ''', (conversation_text, datetime.utcnow(), False, 0, 0, None, title if title else None))
+            ''', (conversation_text, datetime.utcnow(), False, False, 0, 0, None, title if title else None))
             new_convo = cur.fetchone()
             conn.commit()
 
@@ -318,10 +326,11 @@ def add_conversation():
                 'conversation': new_convo[1],
                 'created_at': new_convo[2].isoformat(),
                 'is_saved': new_convo[3],
-                'rating_sum': float(new_convo[4]),
-                'rating_count': int(new_convo[5]),
-                'photo_base64': new_convo[6],
-                'title': new_convo[7],
+                'is_shared': new_convo[4],
+                'rating_sum': float(new_convo[5]),
+                'rating_count': int(new_convo[6]),
+                'photo_base64': new_convo[7],
+                'title': new_convo[8],
                 'average_rating': avg_rating
             }), 201
     except Exception as e:
@@ -335,21 +344,23 @@ def update_conversation(conversation_id):
     """
     Update a conversation row with any subset of:
       - is_saved (bool)
+      - is_shared (bool)
       - rating (one rating to add to rating_sum, rating_count)
       - photo_base64 (attach dish image)
       - title (short name for the recipe)
     Example body:
       {
         "is_saved": true,
+        "is_shared": true,
         "rating": 4,
         "photo_base64": "<base64 string>",
         "title": "Adobo Supreme"
       }
-
-    We'll re-compute average rating on the fly in the response.
+    The average rating is computed on the fly in the response.
     """
     data = request.get_json()
     is_saved = data.get('is_saved')
+    new_is_shared = data.get('is_shared')
     new_rating = data.get('rating')
     photo_b64 = data.get('photo_base64')
     new_title = data.get('title', '').strip()
@@ -366,6 +377,7 @@ def update_conversation(conversation_id):
                     conversation_text,
                     created_at,
                     is_saved,
+                    is_shared,
                     rating_sum,
                     rating_count,
                     photo_base64,
@@ -378,33 +390,34 @@ def update_conversation(conversation_id):
                 return jsonify({"error": "Conversation not found"}), 404
 
             current_is_saved   = existing[3]
-            current_rating_sum = float(existing[4])
-            current_rating_cnt = int(existing[5])
-            current_photo_b64  = existing[6]
-            current_title      = existing[7] if existing[7] else None
+            current_is_shared  = existing[4]
+            current_rating_sum = float(existing[5])
+            current_rating_cnt = int(existing[6])
+            current_photo_b64  = existing[7]
+            current_title      = existing[8] if existing[8] else None
 
-            # is_saved update
+            # Update is_saved if provided
             if is_saved is not None:
                 current_is_saved = bool(is_saved)
-
-            # rating update
+            # Update is_shared if provided
+            if new_is_shared is not None:
+                current_is_shared = bool(new_is_shared)
+            # Update rating if provided
             if new_rating is not None:
                 rating_value = float(new_rating)
                 current_rating_sum += rating_value
                 current_rating_cnt += 1
-
-            # photo update
+            # Update photo if provided
             if photo_b64 is not None:
                 current_photo_b64 = photo_b64
-
-            # title update
+            # Update title if provided
             if new_title:
                 current_title = new_title
 
-            # now write back
             cur.execute('''
                 UPDATE conversations
                    SET is_saved = %s,
+                       is_shared = %s,
                        rating_sum = %s,
                        rating_count = %s,
                        photo_base64 = %s,
@@ -415,12 +428,14 @@ def update_conversation(conversation_id):
                 conversation_text,
                 created_at,
                 is_saved,
+                is_shared,
                 rating_sum,
                 rating_count,
                 photo_base64,
                 title
             ''', (
                 current_is_saved,
+                current_is_shared,
                 current_rating_sum,
                 current_rating_cnt,
                 current_photo_b64,
@@ -431,8 +446,8 @@ def update_conversation(conversation_id):
             conn.commit()
 
             if updated:
-                sum_val   = float(updated[4])
-                count_val = int(updated[5])
+                sum_val   = float(updated[5])
+                count_val = int(updated[6])
                 avg_rating = 0.0
                 if count_val > 0:
                     avg_rating = sum_val / count_val
@@ -442,11 +457,12 @@ def update_conversation(conversation_id):
                     'conversation': updated[1],
                     'created_at': updated[2].isoformat(),
                     'is_saved': updated[3],
+                    'is_shared': updated[4],
                     'rating_sum': sum_val,
                     'rating_count': count_val,
                     'average_rating': avg_rating,
-                    'photo_base64': updated[6],
-                    'title': updated[7] if updated[7] else None
+                    'photo_base64': updated[7],
+                    'title': updated[8] if updated[8] else None
                 }), 200
             else:
                 return jsonify({"error": "Conversation not found"}), 404
