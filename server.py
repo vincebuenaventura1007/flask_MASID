@@ -270,11 +270,74 @@ def get_saved_conversations():
     finally:
         conn.close()
 
+@app.route('/api/conversations/shared', methods=['GET'])
+def get_shared_conversations():
+    """
+    Fetch only shared conversations (is_shared = TRUE), ordered by newest first.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute('''
+                SELECT
+                    id,
+                    conversation_text,
+                    created_at,
+                    is_saved,
+                    is_shared,
+                    rating_sum,
+                    rating_count,
+                    photo_base64,
+                    title
+                FROM conversations
+                WHERE is_shared = TRUE
+                ORDER BY created_at DESC
+            ''')
+            rows = cur.fetchall()
+
+            results = []
+            for row in rows:
+                conv_id      = row[0]
+                conversation = row[1]
+                created_at   = row[2].isoformat()
+                is_saved     = row[3]
+                is_shared    = row[4]
+                rating_sum   = float(row[5])
+                rating_count = int(row[6])
+                photo_base64 = row[7]
+                title        = row[8] if row[8] else None
+
+                avg_rating = 0.0
+                if rating_count > 0:
+                    avg_rating = rating_sum / rating_count
+
+                results.append({
+                    'id': conv_id,
+                    'conversation': conversation,
+                    'created_at': created_at,
+                    'is_saved': is_saved,
+                    'is_shared': is_shared,
+                    'rating_sum': rating_sum,
+                    'rating_count': rating_count,
+                    'average_rating': avg_rating,
+                    'photo_base64': photo_base64,
+                    'title': title
+                })
+            return jsonify(results), 200
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch shared conversations: {e}")
+        return jsonify({"error": "Failed to fetch shared conversations"}), 500
+    finally:
+        conn.close()
+
 @app.route('/api/conversations', methods=['POST'])
 def add_conversation():
     """
     Add a new conversation (recipe text).
-    Optional 'title' if provided. Both is_saved and is_shared are defaulted to False.
+    Optional 'title' if provided. Both is_saved and is_shared default to False.
     POST body:
     {
       "conversation": "<text>",
@@ -320,7 +383,7 @@ def add_conversation():
             new_convo = cur.fetchone()
             conn.commit()
 
-            avg_rating = 0.0  # since rating_sum=0, count=0
+            avg_rating = 0.0
             return jsonify({
                 'id': new_convo[0],
                 'conversation': new_convo[1],
@@ -345,7 +408,7 @@ def update_conversation(conversation_id):
     Update a conversation row with any subset of:
       - is_saved (bool)
       - is_shared (bool)
-      - rating (one rating to add to rating_sum, rating_count)
+      - rating (value to add to rating_sum and increment rating_count)
       - photo_base64 (attach dish image)
       - title (short name for the recipe)
     Example body:
@@ -356,7 +419,6 @@ def update_conversation(conversation_id):
         "photo_base64": "<base64 string>",
         "title": "Adobo Supreme"
       }
-    The average rating is computed on the fly in the response.
     """
     data = request.get_json()
     is_saved = data.get('is_saved')
@@ -396,21 +458,16 @@ def update_conversation(conversation_id):
             current_photo_b64  = existing[7]
             current_title      = existing[8] if existing[8] else None
 
-            # Update is_saved if provided
             if is_saved is not None:
                 current_is_saved = bool(is_saved)
-            # Update is_shared if provided
             if new_is_shared is not None:
                 current_is_shared = bool(new_is_shared)
-            # Update rating if provided
             if new_rating is not None:
                 rating_value = float(new_rating)
                 current_rating_sum += rating_value
                 current_rating_cnt += 1
-            # Update photo if provided
             if photo_b64 is not None:
                 current_photo_b64 = photo_b64
-            # Update title if provided
             if new_title:
                 current_title = new_title
 
