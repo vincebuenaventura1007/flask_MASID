@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psycopg2
+from psycopg2 import pool
 import os
 from datetime import datetime
 
@@ -8,21 +9,41 @@ app = Flask(__name__)
 CORS(app)
 
 # -----------------------------------------------------------------
-# DATABASE CONNECTION
+# DATABASE CONNECTION WITH POOLING
 # -----------------------------------------------------------------
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://postgres:IaQzbHtWwdPOntDxSewYKYUXEQwhzwvb@postgres.railway.internal:5432/railway"
 )
 
+try:
+    db_pool = psycopg2.pool.ThreadedConnectionPool(
+        minconn=1,
+        maxconn=10,
+        dsn=DATABASE_URL,
+        sslmode='require'
+    )
+    if db_pool:
+        print("[INFO] Connection pool created successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to create connection pool: {e}")
+    db_pool = None
+
 def get_db_connection():
-    """Create and return a new database connection."""
+    """Get a connection from the pool."""
     try:
-        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        conn = db_pool.getconn()
         return conn
     except Exception as e:
-        print(f"[ERROR] Failed to connect to the database: {e}")
+        print(f"[ERROR] Failed to get connection from pool: {e}")
         return None
+
+def release_db_connection(conn):
+    """Release a connection back to the pool."""
+    try:
+        db_pool.putconn(conn)
+    except Exception as e:
+        print(f"[ERROR] Failed to release connection: {e}")
 
 # -----------------------------------------------------------------
 # TABLE CREATION / MIGRATION
@@ -47,7 +68,6 @@ def create_conversations_table():
 
     try:
         with conn.cursor() as cur:
-            # Create main table if it doesn't exist
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS conversations (
                     id SERIAL PRIMARY KEY,
@@ -59,7 +79,6 @@ def create_conversations_table():
             ''')
             conn.commit()
 
-            # Check for additional columns and add if missing
             cur.execute("""
                 SELECT column_name
                   FROM information_schema.columns
@@ -103,7 +122,7 @@ def create_conversations_table():
     except Exception as e:
         print(f"[ERROR] Failed to create/migrate conversations table: {e}")
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 def create_inventory_table():
     """
@@ -126,7 +145,7 @@ def create_inventory_table():
     except Exception as e:
         print(f"[ERROR] Failed to create inventory table: {e}")
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 # Create tables on startup
 with app.app_context():
@@ -145,10 +164,6 @@ def root():
 # -----------------------------------------------------------------
 @app.route('/api/conversations', methods=['GET'])
 def get_conversations():
-    """
-    Fetch all conversations, ordered by newest first.
-    Returns all fields including is_saved and is_shared.
-    """
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -202,13 +217,10 @@ def get_conversations():
         print(f"[ERROR] Failed to fetch conversations: {e}")
         return jsonify({"error": "Failed to fetch conversations"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/conversations/saved', methods=['GET'])
 def get_saved_conversations():
-    """
-    Fetch only favorited conversations (is_saved = TRUE), ordered by newest first.
-    """
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -263,13 +275,10 @@ def get_saved_conversations():
         print(f"[ERROR] Failed to fetch saved conversations: {e}")
         return jsonify({"error": "Failed to fetch saved conversations"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/conversations/shared', methods=['GET'])
 def get_shared_conversations():
-    """
-    Fetch only shared conversations (is_shared = TRUE), ordered by newest first.
-    """
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -324,19 +333,10 @@ def get_shared_conversations():
         print(f"[ERROR] Failed to fetch shared conversations: {e}")
         return jsonify({"error": "Failed to fetch shared conversations"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/conversations', methods=['POST'])
 def add_conversation():
-    """
-    Add a new conversation (recipe text).
-    Optional 'title' if provided. Both is_saved and is_shared default to False.
-    POST body:
-    {
-      "conversation": "<text>",
-      "title": "Optional short name"
-    }
-    """
     data = request.get_json()
     conversation_text = data.get('conversation', '').strip()
     title = data.get('title', '').strip()
@@ -389,26 +389,10 @@ def add_conversation():
         print(f"[ERROR] Failed to add conversation: {e}")
         return jsonify({"error": "Failed to add conversation"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/conversations/<int:conversation_id>', methods=['PUT'])
 def update_conversation(conversation_id):
-    """
-    Update a conversation row with any subset of:
-      - is_saved (bool)
-      - is_shared (bool)
-      - rating (value to add to rating_sum and increment rating_count)
-      - photo_base64 (attach dish image)
-      - title (short name for the recipe)
-    Example body:
-      {
-        "is_saved": true,
-        "is_shared": true,
-        "rating": 4,
-        "photo_base64": "<base64 string>",
-        "title": "Adobo Supreme"
-      }
-    """
     data = request.get_json()
     is_saved = data.get('is_saved')
     new_is_shared = data.get('is_shared')
@@ -509,11 +493,10 @@ def update_conversation(conversation_id):
         print(f"[ERROR] Failed to update conversation: {e}")
         return jsonify({"error": "Failed to update conversation"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/conversations/<int:conversation_id>', methods=['DELETE'])
 def delete_conversation(conversation_id):
-    """Delete a conversation by ID."""
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -533,14 +516,13 @@ def delete_conversation(conversation_id):
         print(f"[ERROR] Failed to delete conversation: {e}")
         return jsonify({"error": "Failed to delete conversation"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 # -----------------------------------------------------------------
 # INVENTORY ENDPOINTS
 # -----------------------------------------------------------------
 @app.route('/api/inventory', methods=['GET'])
 def get_inventory():
-    """Return items from the 'inventory' table: (id SERIAL, name TEXT NOT NULL)."""
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -559,14 +541,10 @@ def get_inventory():
         print(f"[ERROR] Failed to fetch inventory: {e}")
         return jsonify({"error": "Failed to fetch inventory"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/inventory', methods=['POST'])
 def add_inventory():
-    """
-    Only requires 'name'.
-    POST body: { "name": "<ingredient>" }
-    """
     data = request.get_json()
     name = data.get('name', '').strip()
     if not name:
@@ -591,14 +569,10 @@ def add_inventory():
         print(f"[ERROR] Failed to add inventory item: {e}")
         return jsonify({"error": f"Failed to add inventory item: {str(e)}"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/inventory/<int:item_id>', methods=['PUT'])
 def edit_inventory(item_id):
-    """
-    Update only the 'name' field.
-    PUT body: { "name": "<updated name>" }
-    """
     data = request.get_json()
     name = data.get('name', '').strip()
     if not name:
@@ -627,11 +601,10 @@ def edit_inventory(item_id):
         print(f"[ERROR] Failed to edit inventory item: {e}")
         return jsonify({"error": "Failed to edit inventory item"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/inventory/<int:item_id>', methods=['DELETE'])
 def delete_inventory(item_id):
-    """Delete an inventory item by ID."""
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Failed to connect to the database"}), 500
@@ -651,14 +624,13 @@ def delete_inventory(item_id):
         print(f"[ERROR] Failed to delete inventory item: {e}")
         return jsonify({"error": "Failed to delete inventory item"}), 500
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 # -----------------------------------------------------------------
 # HEALTH CHECK
 # -----------------------------------------------------------------
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Simple health check endpoint."""
     return jsonify({"status": "API is running"}), 200
 
 # -----------------------------------------------------------------
